@@ -8,12 +8,22 @@
 import AppKit
 import SwiftUI
 import Carbon
+import ApplicationServices
+
+class ClipboardPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
 
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var clipboardWatcher: ClipboardWatcher!
     var clipboardHistory: [String] = []
+    var clickMonitor: Any?
+    
+    var popupWindow: NSPanel?
+    var prevApp: NSRunningApplication?
     
     private var hotKeyRef: EventHotKeyRef? = nil
     private var eventHandlerRef: EventHandlerRef? = nil
@@ -22,7 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "📋"
-
+        
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "No copies yet", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
@@ -67,7 +77,117 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func handleHotkeyPressed() {
         print("Hotkey pressed")
-//        showClipboard()
+        
+        if !AXIsProcessTrusted() {
+            let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+//            print("Got Permission")
+        }
+        
+        showPopup()
+        
+        
+    }
+    
+    func showPopup() {
+        let prevApp = NSWorkspace.shared.frontmostApplication
+        self.prevApp = prevApp
+        // Close if already open
+        if let window = popupWindow {
+            window.close()
+            popupWindow = nil
+            return
+        }
+        let panel = ClipboardPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 250, height: 300),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true                // keeps it above normal windows
+        panel.level = .statusBar                    // appears above all normal app windows
+        panel.hasShadow = true
+        panel.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.97)
+        panel.isOpaque = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .transient] // transient and floating
+        panel.becomesKeyOnlyIfNeeded = true
+        
+        let scrollView = NSScrollView(frame: panel.contentView!.bounds)
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.automaticallyAdjustsContentInsets = false
+
+        let textStack = NSStackView()
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 4
+        textStack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        
+        for (index, item) in clipboardHistory.enumerated() {
+            let button = NSButton(title: "- \(item)", target: self, action: #selector(pasteClipboardItem(_:)))
+            button.tag = index
+            button.font = NSFont.systemFont(ofSize: 13)
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.setButtonType(.momentaryChange)
+            button.alignment = .left
+            button.toolTip = item
+            button.contentTintColor = NSColor.labelColor
+            
+            textStack.addArrangedSubview(button)
+        }
+        
+        
+        scrollView.documentView = textStack
+        
+        if let contentView = scrollView.contentView.superview {
+            NSLayoutConstraint.activate([
+                textStack.topAnchor.constraint(equalTo: contentView.topAnchor),
+                textStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                textStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+                textStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+            ])
+        }
+        
+        
+        
+        panel.contentView = scrollView
+        
+        let mouseLocation = NSEvent.mouseLocation
+        let screenFrame = NSScreen.main?.frame ?? NSRect.zero
+        let popupHeight: CGFloat = 300
+        let popupWidth: CGFloat = 250
+        let yPos = min(mouseLocation.y, screenFrame.height - popupHeight)
+        let popupRect = NSRect(x: mouseLocation.x - popupWidth/2,
+                               y: yPos - popupHeight - 10,
+                               width: popupWidth,
+                               height: popupHeight)
+
+        panel.setFrame(popupRect, display: true)
+        
+        popupWindow = panel
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)            // brings it to the front
+        
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            if let window = self?.popupWindow {
+                window.close()
+                self?.popupWindow = nil
+                if let prevApp = prevApp {
+                    prevApp.activate(options: [])
+                }
+            }
+            if let monitor = self?.clickMonitor {
+                NSEvent.removeMonitor(monitor)
+                self?.clickMonitor = nil
+                if let prevApp = prevApp {
+                    prevApp.activate(options: [])
+                }
+            }
+        }
+
     }
     
     private let hotKeyHandler: EventHandlerUPP = { (nextHandlerPointer, eventRefPointer, userDataPointer) -> OSStatus in
@@ -155,5 +275,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("Unregistered custome hotkey")
         NSApp.terminate(nil)
     }
+    
+    @objc private func pasteClipboardItem(_ sender: NSButton) {
+        let index = sender.tag
+        guard index < clipboardHistory.count else { return }
+        let text = clipboardHistory[index]
+        print("Clicked item \(index): \(text)") // TEST LOG
+        
+        // Copy selected text to system clipboard
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        print("Accessibility enabled: \(AXIsProcessTrusted())")
+        // Close popup and bring previous app forward
+        popupWindow?.close()
+        popupWindow = nil
+        if let prevApp = prevApp {
+            prevApp.activate(options: [])        }
+
+        print("Switched back to previous app")
+        
+        // Simulate Command + V after short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard let src = CGEventSource(stateID: .hidSystemState) else { return }
+            
+            let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Command), keyDown: true)
+            let vDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
+            let vUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
+            let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Command), keyDown: false)
+            
+            vDown?.flags = .maskCommand
+            vUp?.flags = .maskCommand
+            
+            cmdDown?.post(tap: .cghidEventTap)
+            vDown?.post(tap: .cghidEventTap)
+            vUp?.post(tap: .cghidEventTap)
+            cmdUp?.post(tap: .cghidEventTap)
+            
+            print("Simulated ⌘V paste event")
+        }
+    }
+
 }
 
