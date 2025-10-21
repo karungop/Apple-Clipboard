@@ -15,6 +15,34 @@ class ClipboardPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
+class HoverButton: NSButton {
+    private var defaultColor: NSColor = .clear
+    private var hoverColor: NSColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.2)
+    
+    override func updateTrackingAreas() {
+        trackingAreas.forEach { removeTrackingArea($0) }
+        let trackingArea = NSTrackingArea(rect: bounds,
+                                          options: [.mouseEnteredAndExited, .activeAlways],
+                                          owner: self,
+                                          userInfo: nil)
+        addTrackingArea(trackingArea)
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = hoverColor.cgColor
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = defaultColor.cgColor
+    }
+    
+    override func awakeFromNib() {
+        wantsLayer = true
+        layer?.backgroundColor = defaultColor.cgColor
+        layer?.cornerRadius = 4
+    }
+}
+
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -25,6 +53,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var popupWindow: NSPanel?
     var prevApp: NSRunningApplication?
     
+    var constantClips: [String] = ["A", "B", "C"]
+    
     private var hotKeyRef: EventHotKeyRef? = nil
     private var eventHandlerRef: EventHandlerRef? = nil
 
@@ -34,10 +64,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.title = "📋"
         
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Edit Constant Clips…", action: #selector(editConstantClips), keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "No copies yet", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
+        
+        clipboardHistory = UserDefaults.standard.stringArray(forKey: "clipboardHistory") ?? []
+        constantClips = UserDefaults.standard.stringArray(forKey: "constantClips") ?? ["", "", ""]
+        updateMenu()
         
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),eventKind: UInt32(kEventHotKeyPressed))
         let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
@@ -111,6 +147,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isOpaque = false
         panel.collectionBehavior = [.canJoinAllSpaces, .transient] // transient and floating
         panel.becomesKeyOnlyIfNeeded = true
+//        panel.wantsLayer = true
+//        panel.layer?.cornerRadius = 10
+//        panel.hasShadow = true
         
         let scrollView = NSScrollView(frame: panel.contentView!.bounds)
         scrollView.borderType = .noBorder
@@ -125,8 +164,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         textStack.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         textStack.translatesAutoresizingMaskIntoConstraints = false
         
+        
+        for (index, item) in constantClips.enumerated() {
+            let button = HoverButton(title: "★ \(item)", target: self, action: #selector(pasteConstantClip(_:)))
+            button.tag = index
+            button.font = NSFont.systemFont(ofSize: 13)
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.setButtonType(.momentaryChange)
+            button.alignment = .left
+            button.toolTip = item
+            button.contentTintColor = NSColor.labelColor
+            textStack.addArrangedSubview(button)
+        }
+        
+        let separator = NSBox()
+        separator.boxType = .separator
+        textStack.addArrangedSubview(separator)
+        
         for (index, item) in clipboardHistory.enumerated() {
-            let button = NSButton(title: "- \(item)", target: self, action: #selector(pasteClipboardItem(_:)))
+            let button = HoverButton(title: "\(item)", target: self, action: #selector(pasteClipboardItem(_:)))
             button.tag = index
             button.font = NSFont.systemFont(ofSize: 13)
             button.bezelStyle = .inline
@@ -138,6 +195,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
             textStack.addArrangedSubview(button)
         }
+        
+        
+        
+        let footerButton = HoverButton(title: "Clear All", target: self, action: #selector(clearAll))
+        footerButton.bezelStyle = .inline
+        footerButton.isBordered = false
+        footerButton.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        
+        textStack.addArrangedSubview(footerButton)
         
         
         scrollView.documentView = textStack
@@ -231,6 +297,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
         clipboardHistory.insert(text, at: 0)
         clipboardHistory = Array(clipboardHistory.prefix(10))
+        
+        UserDefaults.standard.set(clipboardHistory, forKey: "clipboardHistory")
+        
         updateMenu()
     }
 
@@ -260,6 +329,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func clearAll() {
         clipboardHistory.removeAll()
+        UserDefaults.standard.set(clipboardHistory, forKey: "clipboardHistory")
         updateMenu()
     }
 
@@ -314,6 +384,82 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             
             print("Simulated ⌘V paste event")
         }
+    }
+    
+    @objc private func pasteConstantClip(_ sender: NSButton) {
+//        let index = sender.tag
+//        guard index < constantClips.count else { return }
+//        let text = constantClips[index]
+//        guard !text.isEmpty else { return }
+//        
+//        // Copy to system clipboard
+//        let pasteboard = NSPasteboard.general
+//        pasteboard.clearContents()
+//        pasteboard.setString(text, forType: .string)
+//        
+//        // Close popup and switch back to previous app
+//        popupWindow?.close()
+//        popupWindow = nil
+//        prevApp?.activate(options: [])
+//        
+//        // Optional: simulate ⌘V after delay if you want
+//        simulatePaste()
+        let index = sender.tag
+        guard index < constantClips.count else { return }
+        let text = constantClips[index]
+        print("Clicked item \(index): \(text)") // TEST LOG
+        
+        // Copy selected text to system clipboard
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        print("Accessibility enabled: \(AXIsProcessTrusted())")
+        // Close popup and bring previous app forward
+        popupWindow?.close()
+        popupWindow = nil
+        if let prevApp = prevApp {
+            prevApp.activate(options: [])        }
+
+        print("Switched back to previous app")
+        
+        // Simulate Command + V after short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard let src = CGEventSource(stateID: .hidSystemState) else { return }
+            
+            let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Command), keyDown: true)
+            let vDown = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true)
+            let vUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false)
+            let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Command), keyDown: false)
+            
+            vDown?.flags = .maskCommand
+            vUp?.flags = .maskCommand
+            
+            cmdDown?.post(tap: .cghidEventTap)
+            vDown?.post(tap: .cghidEventTap)
+            vUp?.post(tap: .cghidEventTap)
+            cmdUp?.post(tap: .cghidEventTap)
+            
+            print("Simulated ⌘V paste event")
+        }
+    }
+    
+    @objc private func editConstantClips() {
+        for i in 0..<constantClips.count {
+            let alert = NSAlert()
+            alert.messageText = "Set Constant Clip \(i+1)"
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            input.stringValue = constantClips[i]
+            alert.accessoryView = input
+            
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                constantClips[i] = input.stringValue
+            }
+        }
+        UserDefaults.standard.set(constantClips, forKey: "constantClips")
     }
 
 }
