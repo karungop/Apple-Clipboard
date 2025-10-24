@@ -89,7 +89,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         let vKeyCode: UInt32 = UInt32(kVK_ANSI_V)
         let modifiers: UInt32 = UInt32(cmdKey) | UInt32(shiftKey)
-        var hotKeyID = EventHotKeyID(signature: OSType(0), id: UInt32(1))
+        let hotKeyID = EventHotKeyID(signature: OSType(0), id: UInt32(1))
         
         let registerStatus = RegisterEventHotKey(vKeyCode,
                                                      modifiers,
@@ -175,6 +175,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.alignment = .left
             button.toolTip = item
             button.contentTintColor = NSColor.labelColor
+            
             textStack.addArrangedSubview(button)
         }
         
@@ -306,6 +307,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateMenu() {
         guard let menu = statusItem.menu else { return }
         menu.removeAllItems()
+        
+        menu.addItem(NSMenuItem(title: "Edit Constant Clips…", action: #selector(editConstantClips), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
 
         if clipboardHistory.isEmpty {
             menu.addItem(NSMenuItem(title: "No copies yet", action: nil, keyEquivalent: ""))
@@ -387,23 +391,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     @objc private func pasteConstantClip(_ sender: NSButton) {
-//        let index = sender.tag
-//        guard index < constantClips.count else { return }
-//        let text = constantClips[index]
-//        guard !text.isEmpty else { return }
-//        
-//        // Copy to system clipboard
-//        let pasteboard = NSPasteboard.general
-//        pasteboard.clearContents()
-//        pasteboard.setString(text, forType: .string)
-//        
-//        // Close popup and switch back to previous app
-//        popupWindow?.close()
-//        popupWindow = nil
-//        prevApp?.activate(options: [])
-//        
-//        // Optional: simulate ⌘V after delay if you want
-//        simulatePaste()
         let index = sender.tag
         guard index < constantClips.count else { return }
         let text = constantClips[index]
